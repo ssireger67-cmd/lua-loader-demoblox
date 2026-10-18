@@ -1,138 +1,129 @@
---[[
-    BLOCK STRUIT ULTIMATE AUTO FARM SCRIPT
-    Fitur:
-    - Auto Teleport ke Buah Prioritas (Kitsune, Dragon, Spirit, dll)
-    - Auto Ambil Buah Terdekat jika tidak ada prioritas
-    - Auto Buka Peti Koin (Chest)
-    - Speed Boost Otomatis
-    - Anti-Lag Loop
-    
-    Dibuat untuk KRNL / Fluxus / Wally
-]]
+-- =======================================================================
+-- FIXED INSTANT FRUIT SNIPER + AUTO STORE + BACKUP SERVER HOP
+-- Solusi: Buah tidak akan hilang lagi karena otomatis disimpan sebelum pindah server
+-- =======================================================================
 
+local WAKTU_TUNGGU_HOP = 3 -- Detik nunggu sebelum ganti server jika dari awal tidak ada buah
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
 local LocalPlayer = Players.LocalPlayer
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-local RootPart = Character:WaitForChild("HumanoidRootPart")
 
--- Konfigurasi Utama
-local Config = {
-    EnableAutoFarm = true,
-    EnableAutoChest = true,
-    PriorityFruits = {"Kitsune", "Dragon", "Spirit", "Dough", "Buddha", "Leopard", "T-Rex", "Mammoth", "Dove", "Phoenix"},
-    WalkSpeedNormal = 16,
-    WalkSpeedFarm = 80, -- Kecepatan lari saat farming
-    TeleportRange = 100, -- Jarak pencarian buah (dalam studs)
-    ChestOpenDelay = 0.5, -- Delay buka peti
-}
-
--- Status Visual Sederhana (Hanya Print ke Output untuk Hemat Memory)
-local function Log(msg)
-    print("[BlockStruit] " .. msg)
+-- Fungsi Teleportasi Instan ke posisi buah
+local function TeleportInstan(targetCFrame)
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local root = char:WaitForChild("HumanoidRootPart")
+    
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    
+    root.CFrame = targetCFrame + Vector3.new(0, 2, 0)
+    task.wait(0.5) -- Delay singkat memastikan buah tersentuh dan terambil
 end
 
-Log("Script Loaded. Starting Auto-Farm...")
+-- FUNGSI OTOMATIS MENYIMPAN BUAH KE DALAM INVENTORY (TAS)
+local function SimpanBuahKeTas()
+    pcall(function()
+        local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        -- Mencari apakah ada buah yang sedang dipegang di tangan karakter
+        for _, tool in pairs(char:GetChildren()) do
+            if tool:IsA("Tool") and (tool.Name:find("Fruit") or tool:FindFirstChild("Handle")) then
+                game:GetService("StarterGui"):SetCore("SendNotification", {
+                    Title = "📦 MENYIMPAN BUAH 📦",
+                    Text = "Menyimpan " .. tool.Name .. " ke inventory...",
+                    Duration = 3
+                })
+                -- Menembakkan Remote Event resmi Blox Fruits untuk menyimpan buah
+                local remote = game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("CommF_")
+                remote:InvokeServer("StoreFruit", tool.Name, tool)
+                task.wait(1.5) -- Memberikan jeda waktu agar server Roblox mencatat penyimpanan
+            end
+        end
+    end)
+end
 
--- Fungsi Pencarian Target Terbaik
-local function GetBestTarget()
-    local bestObj = nil
-    local minDist = math.huge
-    local isPriority = false
-
-    for _, obj in pairs(Workspace:GetChildren()) do
-        -- Cek apakah itu Buah (Tool) atau Peti (Chest)
-        local isFruit = obj:IsA("Tool") and obj.Handle
-        local isChest = string.find(obj.Name:lower(), "chest") and obj:IsA("Model")
-        
-        if isFruit then
-            local handle = obj.Handle
-            local dist = (RootPart.Position - handle.Position).Magnitude
-            
-            if dist < Config.TeleportRange and dist < minDist then
-                -- Cek Prioritas
-                local nameLower = obj.Name:lower()
-                for _, pName in ipairs(Config.PriorityFruits) do
-                    if nameLower == pName:lower() then
-                        return {Object = obj, Handle = handle, Distance = dist, Type = "Priority"}
+-- Fungsi Server Hop (Tiga lapis pengaman anti-stuck)
+local function PindahServer()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "🔄 SERVER HOP 🔄",
+        Text = "Mencari server baru...",
+        Duration = 3
+    })
+    task.wait(1)
+    
+    local berhasilPindah = pcall(function()
+        local sfUrl = "https://roblox.com" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        local req = http_request or request or (syn and syn.request)
+        if req then
+            local res = req({Url = sfUrl})
+            local body = HttpService:JSONDecode(res.Body)
+            if body and body.data then
+                for _, server in pairs(body.data) do
+                    if server.playing < server.maxPlayers and server.id ~= game.JobId then
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, LocalPlayer)
+                        task.wait(3)
+                        return true
                     end
                 end
-                
-                -- Jika bukan prioritas tapi masih terdekat
-                if not bestObj then
-                    bestObj = {Object = obj, Handle = handle, Distance = dist, Type = "Nearest"}
-                end
             end
-        elseif isChest and Config.EnableAutoChest then
-            local dist = (RootPart.Position - obj.PrimaryPart.Position).Magnitude
-            if dist < 20 then -- Jarak interaksi peti
-                return {Object = obj, Position = obj.PrimaryPart.Position, Type = "Chest"}
-            end
+        end
+    end)
+    
+    if not berhasilPindah then
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            task.wait(3)
+        end)
+    end
+    
+    pcall(function()
+        TeleportService:TeleportToSpawnPage(game.PlaceId)
+    end)
+end
+
+-- Fungsi Utama memindai buah
+local function CekDanAmbilBuah()
+    local buahDitemukan = false
+    
+    for _, item in pairs(game.Workspace:GetChildren()) do
+        if item:IsA("Tool") and (item.Name:find("Fruit") or item:FindFirstChild("Handle")) then
+            buahDitemukan = true
+            
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "⚡ FRUIT FOUND! ⚡",
+                Text = "Mendapatkan: " .. item.Name .. ". Teleport!",
+                Duration = 4
+            })
+            
+            -- 1. Teleport ke lokasi buah
+            TeleportInstan(item.Handle.CFrame)
+            task.wait(1) -- Nunggu animasi memegang buah selesai
+            
+            -- 2. Amankan buah ke dalam Tas sebelum pindah server
+            SimpanBuahKeTas()
         end
     end
     
-    return bestObj
+    return buahDitemukan
 end
 
--- Loop Utama
-spawn(function()
-    while true do
-        local target = GetBestTarget()
-        
-        if target then
-            if target.Type == "Chest" then
-                -- Logika Buka Peti
-                Log("Found Chest! Opening...")
-                UserInputService:KeyDown(Enum.KeyCode.E)
-                wait(Config.ChestOpenDelay)
-                UserInputService:KeyUp(Enum.KeyCode.E)
-                wait(1) -- Tunggu sebentar setelah buka
-            else
-                -- Logika Farm Buah
-                local handlePos = target.Handle.Position
-                
-                -- Gerakkan karakter
-                Humanoid.WalkSpeed = Config.WalkSpeedFarm
-                
-                -- Hitung vektor arah
-                local direction = (handlePos - RootPart.Position).Unit
-                
-                -- Terapkan Velocity untuk pergerakan cepat tanpa lag
-                RootPart.Velocity = Vector3.new(direction.X * Config.WalkSpeedFarm, RootPart.Velocity.Y, direction.Z * Config.WalkSpeedFarm)
-                
-                -- Jika sudah sangat dekat, berhenti sejenak untuk mengambil item
-                if target.Distance < 5 then
-                    Humanoid.WalkSpeed = 0
-                    RootPart.Velocity = Vector3.new(0, RootPart.Velocity.Y, 0)
-                    wait(0.5) -- Waktu ambil buah
-                end
-            end
-        else
-            -- Tidak ada target, kembali normal
-            Humanoid.WalkSpeed = Config.WalkSpeedNormal
-            RootPart.Velocity = Vector3.new(0, RootPart.Velocity.Y, 0)
-            wait(2) -- Istirahat 2 detik sebelum scan lagi
-        end
-        
-        wait(0.1) -- Interval pengecekan
+-- Eksekusi Utama saat masuk permainan
+task.spawn(function()
+    repeat task.wait() until game:IsLoaded() and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    task.wait(2)
+    
+    local adaBuah = CekDanAmbilBuah()
+    
+    if adaBuah then
+        task.wait(1)
+        PindahServer()
+    else
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "❌ TIDAK ADA BUAH ❌",
+            Text = "Server kosong. Mencari server lain...",
+            Duration = 3
+        })
+        task.wait(WAKTU_TUNGGU_HOP)
+        PindahServer()
     end
 end)
-
--- Fitur Tambahan: Auto-Jump jika ada rintangan kecil
-spawn(function()
-    while true do
-        wait(0.1)
-        if Humanoid.FloorMaterial ~= Enum.Material.Air then
-            -- Jika kaki menyentuh tanah, jangan auto-jump terus
-        else
-            -- Bisa ditambahkan logika jump jika diperlukan
-        end
-    end
-end)
-
-Log("System Running Stable.")
