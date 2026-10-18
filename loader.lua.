@@ -1,13 +1,4 @@
-local URL = "URL_RAW_GITHUB_KAMU"
+local URL = "https://raw.githubusercontent.com/ssireger67-cmd/lua-loader-demoblox/main/main.lua"
 
-local ok, source = pcall(function()
-    return game:HttpGet(URL)
-end)
-
-if not ok then
-    warn("Gagal mengambil kode:", source)
-    return
-end
-
-print("Kode berhasil diambil.")
-print(source)
+print("Loader siap.")
+print("Sumber script:", URL)
